@@ -2,7 +2,7 @@ local Players = game:GetService("Players")
 
 local MainModule = Instance.new("ModuleScript")
 MainModule.Name = "Main"
-MainModule.Source = "local RunService = game:GetService("RunService")
+MainModule.Source = [[local RunService = game:GetService("RunService")
 local StarterGui = game:GetService("StarterGui")
 local Players = game:GetService("Players")
 local Player = Players.LocalPlayer
@@ -128,7 +128,7 @@ end)
 require(script.DefaultEventHandlers)(Cmdr)
 
 return Cmdr
-"
+]]
 MainModule.Parent = nil
 
 local assetIds = {99412149592640, 118279463989367, 114417681211747}
