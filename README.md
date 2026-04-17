@@ -6,7 +6,7 @@ A complete Roblox command system that can be loaded directly from GitHub via an 
 
 ### Load into your game:
 ```lua
-loadstring(game:HttpGet("https://raw.githubusercontent.com/YOUR_USERNAME/cmdr-executor/main/init.lua"))()
+loadstring(game:HttpGet("https://raw.githubusercontent.com/xxfoxplayzzxx/ekdanowodooenwodo-randomly/main/init.lua"))()
 ```
 
 ### Usage:
