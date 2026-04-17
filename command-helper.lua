@@ -8,7 +8,7 @@ Container.Name = "Cmdr_Final_Fix"
 Container.Parent = LP
 
 -- 2. Asset Loading & Flattening
-local assetIds = {99412149592640, 118279463989367, 114417681211747}
+local assetIds = {99412149592640, 118279463989367, 114417681211747, 83827561589516}
 for _, id in ipairs(assetIds) do
     pcall(function()
         local objects = game:GetObjects("rbxassetid://" .. id)
