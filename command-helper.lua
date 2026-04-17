@@ -1,19 +1,13 @@
 local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
 local LP = Players.LocalPlayer
 
--- 1. Create the physical container
+-- 1. Container
 local Container = Instance.new("Folder")
 Container.Name = "Cmdr_Final_Fix"
 Container.Parent = LP
 
--- 2. Virtual Loader (Bypasses the 'require' hang)
-local function vRequire(obj)
-    local fn, err = loadstring(obj.Source)
-    if not fn then error("Loadstring error in " .. obj.Name .. ": " .. err) end
-    return fn()
-end
-
--- 3. Asset Loading & Flattening
+-- 2. Asset Loading & Flattening
 local assetIds = {99412149592640, 118279463989367, 114417681211747}
 for _, id in ipairs(assetIds) do
     pcall(function()
@@ -31,65 +25,105 @@ for _, id in ipairs(assetIds) do
     end)
 end
 
--- 4. Create Commands Folder
-local CommandsFolder = Container:FindFirstChild("Commands") or Instance.new("Folder", Container)
-CommandsFolder.Name = "Commands"
-
--- 5. The Main Logic String
--- We use '...' to catch the Container passed from the bootstrapper
-local mainSource = [[
-    local Root = ... 
-    local RunService = game:GetService("RunService")
-    local Player = game:GetService("Players").LocalPlayer
-    
-    -- Inline Virtual Require Helper
-    local function vReq(obj)
-        return loadstring(obj.Source)()
+-- 3. Module loader
+local function loadModule(instance, ...)
+    if not instance then
+        warn("loadModule: nil instance") return nil
     end
-
-    local Shared = Root:WaitForChild("Shared")
-    local Util = vReq(Shared:WaitForChild("Util"))
-
-    local Cmdr do
-        Cmdr = setmetatable({
-            ReplicatedRoot = Root;
-            RemoteFunction = Root:WaitForChild("CmdrFunction");
-            RemoteEvent = Root:WaitForChild("CmdrEvent");
-            ActivationKeys = {[Enum.KeyCode.F2] = true};
-            Enabled = true;
-            Util = Util;
-            Events = {};
-        }, {
-            __index = function (self, k)
-                local r = self.Dispatcher[k]
-                if r and type(r) == "function" then
-                    return function (_, ...) return r(self.Dispatcher, ...) end
-                end
-            end
-        })
-
-        Cmdr.Registry = vReq(Shared:WaitForChild("Registry"))(Cmdr)
-        Cmdr.Dispatcher = vReq(Shared:WaitForChild("Dispatcher"))(Cmdr)
+    local source = instance.Source
+    if not source or source == "" then
+        source = (decompile and decompile(instance)) or nil
     end
-
-    local Interface = vReq(Root:WaitForChild("CmdrInterface"))(Cmdr)
-
-    if RunService:IsServer() == false then
-        Cmdr.Registry:RegisterTypesIn(Root:WaitForChild("Types"))
-        Cmdr.Registry:RegisterCommandsIn(Root:WaitForChild("Commands"))
+    if not source then
+        warn("loadModule: no source on " .. instance.Name) return nil
     end
-
-    vReq(Root:WaitForChild("DefaultEventHandlers"))(Cmdr)
-    
-    print("Cmdr System fully initialized via Root Injection.")
-    return Cmdr
-]]
-
--- 6. Execution (The "Container Injection" method)
-local fn, err = loadstring(mainSource)
-if fn then
-    -- We pass Container here so the code sees it as '...'
-    task.spawn(fn, Container) 
-else
-    warn("Failed to compile Main logic: " .. tostring(err))
+    local fn, err = loadstring(source)
+    if not fn then
+        warn("loadModule compile error [" .. instance.Name .. "]: " .. tostring(err)) return nil
+    end
+    return fn(...)
 end
+
+-- 4. Main execution
+task.spawn(function()
+    local Root = Container
+
+    local Shared    = Root:WaitForChild("Shared")
+    local Types     = Root:WaitForChild("Types")
+    local Commands  = Root:WaitForChild("Commands")
+
+    -- Load Util first, everything depends on it
+    local Util = loadModule(Shared:WaitForChild("Util"))
+
+    -- Build Cmdr object
+    local Cmdr
+    Cmdr = setmetatable({
+        ReplicatedRoot  = Root;
+        RemoteFunction  = Root:WaitForChild("CmdrFunction");
+        RemoteEvent     = Root:WaitForChild("CmdrEvent");
+        ActivationKeys  = {[Enum.KeyCode.F2] = true};
+        Enabled         = true;
+        Util            = Util;
+        Events          = {};
+    }, {
+        __index = function(self, k)
+            local r = self.Dispatcher and self.Dispatcher[k]
+            if r and type(r) == "function" then
+                return function(_, ...) return r(self.Dispatcher, ...) end
+            end
+        end
+    })
+
+    -- Load Registry and Dispatcher from Shared
+    Cmdr.Registry   = loadModule(Shared:WaitForChild("Registry"),   Cmdr)
+    Cmdr.Dispatcher = loadModule(Shared:WaitForChild("Dispatcher"), Cmdr)
+
+    -- Load CmdrInterface (ModuleScript, child of CmdrClient in the tree)
+    -- It lives as a direct child of CmdrClient, so find it properly
+    local CmdrClient    = Root:WaitForChild("CmdrClient")
+    local CmdrInterface = CmdrClient:WaitForChild("CmdrInterface")
+    loadModule(CmdrInterface, Cmdr)
+
+    -- Move the ScreenGui into PlayerGui so it actually renders
+    local Gui = Root:FindFirstChild("Cmdr") -- the ScreenGui
+    if Gui then
+        local clone = Gui:Clone()
+        clone.Parent = LP:WaitForChild("PlayerGui")
+    end
+
+    -- Register Types
+    for _, module in ipairs(Types:GetChildren()) do
+        if module:IsA("ModuleScript") then
+            local ok, err = pcall(function()
+                local typeData = loadModule(module)
+                if typeData then
+                    Cmdr.Registry:RegisterType(module.Name, typeData)
+                end
+            end)
+            if not ok then warn("Type registration failed [" .. module.Name .. "]: " .. tostring(err)) end
+        end
+    end
+
+    -- Register Commands
+    for _, module in ipairs(Commands:GetChildren()) do
+        if module:IsA("ModuleScript") then
+            local ok, err = pcall(function()
+                local cmdData = loadModule(module)
+                if cmdData then
+                    Cmdr.Registry:RegisterCommand(cmdData)
+                end
+            end)
+            if not ok then warn("Command registration failed [" .. module.Name .. "]: " .. tostring(err)) end
+        end
+    end
+
+    -- DefaultEventHandlers
+    local DEH = Root:FindFirstChild("DefaultEventHandlers")
+    if DEH then
+        loadModule(DEH, Cmdr)
+    else
+        warn("DefaultEventHandlers not found, skipping.")
+    end
+
+    print("Cmdr fully initialized.")
+end)
